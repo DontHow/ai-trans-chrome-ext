@@ -58,9 +58,9 @@
     const reopen = document.createElement('button'); reopen.className = 'reopen'; reopen.hidden = true; reopen.setAttribute('aria-label', '展开翻译工具栏');
     const setState = state => {
       section.dataset.state = state;
-      const label = { running: '翻译中', paused: '已停止', complete: '已完成', waiting: '待阅读', error: '需重试', empty: '无正文' }[state];
+      const label = { running: '翻译中', paused: '已停止', complete: '已完成', waiting: '待阅读', hover: '待悬停', error: '需重试', empty: '无正文' }[state];
       badge.textContent = label; reopen.textContent = `译存 · ${label}`;
-      stop.hidden = !['running', 'waiting'].includes(state);
+      stop.hidden = !['running', 'waiting', 'hover', 'empty'].includes(state);
     };
     stop.onclick = () => { stopSession(); runId++; status.textContent = '已停止，已显示的译文会保留。'; stop.disabled = true; setState('paused'); };
     minimize.onclick = () => { section.hidden = true; reopen.hidden = false; reopen.focus(); };
@@ -147,10 +147,28 @@
       const done = all.filter(record => ['done', 'identical'].includes(record.status)).length;
       const shown = all.filter(record => record.host?.isConnected).length;
       const same = all.filter(record => record.status === 'identical').length;
+      const hoverReady = all.filter(record => record.item.mode === 'tooltip' && record.status === 'done').length;
+      const hoverWaiting = all.filter(record => record.item.mode === 'tooltip' && record.status === 'idle').length;
+      const inlineWaiting = all.filter(record => record.item.mode === 'inline' && record.status === 'idle').length;
+      const inlineDone = all.some(record => record.item.mode === 'inline' && ['done', 'identical'].includes(record.status));
+      const busy = active || queue.length;
       ui.progress.max = Math.max(1, all.length); ui.progress.value = done;
-      ui.setState(failure ? 'error' : active || queue.length || viewportPending.size ? 'running' : 'waiting');
-      const counts = `已显示 ${shown} 段${same ? `，${same} 段与原文相同已隐藏` : ''}`;
-      ui.status.textContent = failure ? `${counts}。${failure} 重新点击「翻译当前网页」可重试。` : active || queue.length ? `正在翻译 ${done} / ${all.length} 段 · ${counts}` : viewportPending.size ? '正在识别可视正文…' : `当前区域翻译完成 · ${counts}。向下滚动继续；复杂区域悬停翻译。${limited ? '已达本次 300 段 / 120,000 字符上限。' : ''}`;
+      ui.setState(failure ? 'error' : busy || viewportPending.size ? 'running' : !all.length ? 'empty' : all.every(record => record.item.mode === 'tooltip') ? 'hover' : 'waiting');
+      const details = [`已识别 ${all.length} 段`];
+      if (shown) details.push(`正文已显示 ${shown} 段`);
+      if (hoverReady) details.push(`已备好 ${hoverReady} 段悬浮译文`);
+      if (same) details.push(`${same} 段与原文相同已隐藏`);
+      const counts = details.join('，');
+      const pending = [inlineWaiting ? `${inlineWaiting} 段待滚动到正文后翻译` : '', hoverWaiting ? `${hoverWaiting} 段需将鼠标停留在原文上翻译` : ''].filter(Boolean).join('；');
+      let message;
+      if (failure) message = `${counts}。${failure} 重新点击「翻译当前网页」可重试。`;
+      else if (busy) message = `正在翻译 ${done} / ${all.length} 段 · ${counts}`;
+      else if (viewportPending.size) message = '正在识别可视正文…';
+      else if (!all.length) message = '未找到可翻译正文，正在等待页面内容。也可使用划词翻译。';
+      else if (inlineDone) message = `当前可见正文翻译完成 · ${counts}。${pending || '继续监听正文更新。'}`;
+      else if (hoverReady || same) message = `悬浮翻译已就绪 · ${counts}。${pending || '停留在原文上查看。'}`;
+      else message = `${counts}，尚未开始翻译。${pending}。`;
+      ui.status.textContent = message + (limited ? '已达本次 300 段 / 120,000 字符上限。' : '');
     }
     function halt() {
       if (stopped) return;

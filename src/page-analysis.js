@@ -31,14 +31,30 @@
     if (mains.length) return { elements: topLevel(mains), label: '主要内容' };
     return { elements: document.body ? [document.body] : [], label: '通用正文' };
   }
+  function heightConstrained(element, style) {
+    if (style.maxHeight !== 'none') return true;
+    // getComputedStyle resolves auto height to pixels. Typed OM preserves auto.
+    let height = element.style.height;
+    try { height = element.computedStyleMap?.().get('height')?.toString() || height; } catch { /* Fall back to the inline declaration and actual clipping. */ }
+    return !!height && !['auto', 'min-content', 'max-content', 'fit-content'].includes(height) || element.scrollHeight > element.clientHeight + 1;
+  }
   function modeFor(element, root) {
     if (element.closest('table,[role="grid"],[role="treegrid"],[role="table"],[role="feed"]')) return 'tooltip';
     for (let node = element; node; node = node.parentElement) {
       const style = getComputedStyle(node);
-      if (['absolute', 'fixed', 'sticky'].includes(style.position) || style.webkitLineClamp !== 'none' && Number(style.webkitLineClamp) > 0) return 'tooltip';
-      if (/hidden|clip|auto|scroll/.test(`${style.overflowX} ${style.overflowY}`)) return 'tooltip';
-      // Adding a child changes flex/grid participation, even if it looks like prose.
-      if (/^(inline-)?(flex|grid)$/.test(style.display) && (node === element || style.flexDirection !== 'column' && node.children.length > 1)) return 'tooltip';
+      if (Number(style.webkitLineClamp) > 0) return 'tooltip';
+      // A page's scroll/flex/grid shell is not a constraint on paragraph flow.
+      if (node === root && node !== element) break;
+      if (['absolute', 'fixed', 'sticky'].includes(style.position)) return 'tooltip';
+      if (/hidden|clip|auto|scroll/.test(style.overflowY) && heightConstrained(node, style)) return 'tooltip';
+      const layout = /^(inline-)?(flex|grid)$/.test(style.display);
+      if (node === element && layout) return 'tooltip';
+      if (node === element.parentElement && layout && node.children.length > 1) {
+        const grid = style.display.includes('grid');
+        const tracks = style.gridTemplateColumns.replace(/\[[^\]]*\]/g, '').trim().split(/\s+/);
+        // Single-column, auto-height grids are ordinary vertical reading flow.
+        if (grid ? tracks.length > 1 || style.gridAutoFlow.includes('column') : style.flexDirection !== 'column') return 'tooltip';
+      }
       if (node === root) break;
     }
     return 'inline';

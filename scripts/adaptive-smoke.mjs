@@ -118,6 +118,27 @@ try {
   assert.ok(!requests.includes('Unrelated account and repository metadata.'));
   assert.equal(await github.locator('nav [data-ai-translation], main > p [data-ai-translation]').count(), 0);
   assert.ok(!requests.includes('Navigation must stay untouched.') && !requests.includes('Outside metadata must not be sent.'));
+  await context.route('https://github.com/adaptive/empty', route => route.fulfill({ contentType: 'text/html', body: `<html><head><style>main{display:flex;overflow:auto;height:600px}.content{flex:1;min-width:0;overflow:hidden}.columns{display:grid;grid-template-columns:1fr 1fr;gap:20px}.panel{display:grid;grid-template-columns:1fr;overflow:hidden;padding:20px}.bounded{height:45px;overflow:hidden}</style></head><body><nav>Repository navigation</nav><main><section class="content"><div class="columns"><section class="panel"><h3 id="setup-title">Start coding with Codespaces</h3><p id="setup-copy">Add a README file and start coding in a secure, configurable development environment.</p></section><section class="panel"><h3 id="invite-title">Add collaborators to this repository</h3><p id="invite-copy">Search for people using their GitHub username or email address.</p></section></div><div class="bounded"><p id="bounded-copy">This fixed-height panel must use a floating translation.</p></div></section></main></body></html>` }));
+  const empty = await context.newPage(); await empty.goto('https://github.com/adaptive/empty');
+  const emptyTab = await ui.evaluate(async () => (await chrome.tabs.query({ url: 'https://github.com/adaptive/empty' }))[0].id);
+  await ui.evaluate(async tabId => { const r = await chrome.runtime.sendMessage({ type: 'startPage', tabId }); if (!r.ok) throw new Error(r.error); }, emptyTab);
+  for (const id of ['setup-title', 'setup-copy', 'invite-title', 'invite-copy']) await empty.locator(`#${id} [data-ai-translation]`).waitFor();
+  assert.equal(await empty.locator('#bounded-copy [data-ai-translation]').count(), 0);
+  await empty.getByRole('status').filter({ hasText: '正文已显示 4 段' }).waitFor();
+  await empty.screenshot({ path: join(process.cwd(), 'artifacts/github-empty-layout-fixed.png'), animations: 'disabled' });
+  const hoverUrl = `http://127.0.0.1:${server.address().port}/hover-only`;
+  await context.route(hoverUrl, route => route.fulfill({ contentType: 'text/html', body: '<html><body><main><table><tr><td id="only-cell">Only translate this bounded table when I hover.</td></tr></table></main></body></html>' }));
+  const hoverOnly = await context.newPage(); await hoverOnly.goto(hoverUrl);
+  const hoverTab = await ui.evaluate(async url => (await chrome.tabs.query({ url }))[0].id, hoverUrl);
+  await ui.evaluate(async tabId => { const r = await chrome.runtime.sendMessage({ type: 'startPage', tabId }); if (!r.ok) throw new Error(r.error); }, hoverTab);
+  await hoverOnly.getByRole('status').filter({ hasText: '尚未开始翻译' }).waitFor();
+  const hoverStatus = await hoverOnly.getByRole('status').innerText();
+  assert.ok(!hoverStatus.includes('翻译完成') && !hoverStatus.includes('已显示 0 段'));
+  assert.ok(!requests.includes('Only translate this bounded table when I hover.'));
+  await hoverOnly.locator('#only-cell').hover();
+  await hoverOnly.getByText('译文：Only translate this bounded table when I hover.', { exact: true }).waitFor();
+  await hoverOnly.getByRole('status').filter({ hasText: '已备好 1 段悬浮译文' }).waitFor();
+  assert.equal(await hoverOnly.locator('td [data-ai-translation]').count(), 0);
   console.log('PASS: content roots, semantic inline assembly, viewport-first loading, layout-safe hover fallback, dynamic additions/changes, observer deduplication, framework conflict fallback, stop/restore, route boundaries and GitHub README selection.');
 } finally {
   release?.();
