@@ -1,7 +1,8 @@
 // Runs only in Chrome's isolated content-script world after an explicit page action.
 (() => {
   if (globalThis.__yiCunPage) return;
-  const SKIP = 'script,style,noscript,textarea,input,select,button,pre,code,kbd,samp,svg,canvas,math,iframe,[contenteditable]:not([contenteditable="false"]),[translate="no"],[hidden],[inert],[aria-hidden="true"],[data-ai-translation],[data-ai-toolbar]';
+  const SKIP = 'script,style,noscript,textarea,input,select,button,pre,svg,canvas,math,iframe,[contenteditable]:not([contenteditable="false"]),[translate="no"],[hidden],[inert],[aria-hidden="true"],[data-ai-translation],[data-ai-toolbar]';
+  const INLINE_CONTEXT = 'p,h1,h2,h3,h4,h5,h6,li,blockquote,td,th,dt,dd,figcaption';
   const BLOCK = 'p,h1,h2,h3,h4,h5,h6,li,blockquote,td,th,dt,dd,figcaption,div,section,article,main,header,footer,nav,aside,body';
   const inserted = new Set();
   let runId = 0;
@@ -25,7 +26,8 @@
     return nodes.map(node => node.nodeType === Node.ELEMENT_NODE ? '\n' : node.textContent).join('').replace(/[^\S\n]+/g, ' ').trim();
   }
   function collect() {
-    const groups = new Map();
+    const groups = [];
+    let currentGroup;
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
     while (walker.nextNode()) {
       const node = walker.currentNode;
@@ -33,12 +35,17 @@
       if (node.nodeType === Node.ELEMENT_NODE && !isBreak) continue;
       const parent = node.parentElement;
       if (!parent || (!isBreak && !node.textContent) || parent.closest(SKIP) || !visible(parent)) continue;
+      const literal = parent.closest('code,kbd,samp');
+      if (literal && !literal.closest(INLINE_CONTEXT)) continue;
       const block = parent.closest(BLOCK) || parent;
-      if (!groups.has(block)) groups.set(block, []);
-      groups.get(block).push(node);
+      if (!currentGroup || currentGroup.element !== block) {
+        currentGroup = { element: block, nodes: [] };
+        groups.push(currentGroup);
+      }
+      currentGroup.nodes.push(node);
     }
     const items = []; let characters = 0; let limited = false;
-    for (const [element, nodes] of groups) {
+    for (const { element, nodes } of groups) {
       const text = textOf(nodes);
       if (!/\p{L}/u.test(text)) continue;
       if (items.length >= 300 || characters + text.length > 120000) { limited = true; continue; }
@@ -76,7 +83,11 @@
     const span = document.createElement('span'); span.textContent = text;
     const langs = { '简体中文': 'zh-CN', '繁體中文': 'zh-TW', English: 'en', '日本語': 'ja', '한국어': 'ko', Français: 'fr', Deutsch: 'de', Español: 'es' };
     span.lang = langs[target] || ''; span.dir = 'auto';
-    shadow.append(style, span); item.element.append(host); inserted.add(host);
+    shadow.append(style, span);
+    let anchor = item.nodes.findLast(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim());
+    while (anchor && anchor.parentNode !== item.element) anchor = anchor.parentNode;
+    if (!anchor) return;
+    anchor.after(host); inserted.add(host);
   }
   function start(token, target) {
     restore();
