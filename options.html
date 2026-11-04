@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>接口设置 · 译存</title><link rel="stylesheet" href="src/styles.css"></head>
+<body class="options"><main><header><a class="brand" href="popup.html"><span class="mark">译</span><span>译存<small>AI TRANSLATE</small></span></a><span class="eyebrow">PREFERENCES / 01</span></header>
+<div class="intro"><span class="eyebrow">YOUR MODEL, YOUR WORDS</span><h1>接入你的 AI。</h1><p>使用支持 OpenAI Chat Completions 格式的接口。</p></div>
+<form id="config"><section class="settings-card"><h2><span>01</span> 翻译服务</h2>
+<label for="url">API 地址</label><input id="url" type="url" required placeholder="https://api.openai.com/v1"><p class="hint">填写基础地址或完整的 /chat/completions 地址。HTTPS 或本机 HTTP 均可。</p>
+<label for="key">API Key <span class="optional">本机服务可留空</span></label><div class="key-field"><input id="key" type="password" autocomplete="off" placeholder="sk-…"><button id="toggle-key" class="quiet" type="button" aria-pressed="false">显示</button></div>
+<label for="model">模型名称</label><input id="model" required maxlength="200" placeholder="填写服务商支持的模型 ID">
+<p class="hint">Key 仅保存在本机，翻译时发送给你配置的接口。待翻译文本也会发送到该接口。</p>
+</section><section class="settings-card"><h2><span>02</span> 翻译偏好</h2><div class="field-grid"><div><label for="target">默认目标语言</label><select id="target"></select></div><div><label for="cacheDays">缓存保留时间</label><select id="cacheDays"><option value="0">关闭缓存</option><option value="1">1 天</option><option value="7">7 天</option><option value="30">30 天</option><option value="90">90 天</option></select></div></div><p class="hint">相同接口、模型、原文和目标语言会复用译文。已有缓存可在离线时使用。</p></section>
+<div class="action-row"><p id="status" role="status">保存时将请求接口域名的访问权限。</p><button class="primary" id="save" type="submit">保存设置 ↗</button></div></form>
+<section class="cache-card"><div><h2>本地译文缓存</h2><p id="cache-info" class="hint">正在读取…</p><p class="hint">清空后，下次翻译将重新请求 AI 接口。</p></div><button id="clear-cache" class="secondary">清空缓存</button></section>
+<footer><span class="dot"></span>你的接口，你的选择。<span class="footer-end">LOCAL FIRST</span></footer>
+</main><script type="module" src="src/options.js"></script></body></html>

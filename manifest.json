@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "译存 · AI Translate",
+  "version": "0.1.0",
+  "description": "使用自定义 AI 接口翻译文本，在本地缓存译文。支持网页划词右键翻译。",
+  "minimum_chrome_version": "120",
+  "permissions": ["storage", "contextMenus"],
+  "optional_host_permissions": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
+  "background": { "service_worker": "src/background.js", "type": "module" },
+  "action": { "default_title": "译存 · AI 翻译", "default_popup": "popup.html" },
+  "options_page": "options.html",
+  "content_security_policy": { "extension_pages": "script-src 'self'; object-src 'self'" }
+}

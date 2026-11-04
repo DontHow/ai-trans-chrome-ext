@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>译存 · AI 翻译</title><link rel="stylesheet" href="src/styles.css"></head>
+<body class="translator"><main>
+<header><a class="brand" href="popup.html"><span class="mark">译</span><span>译存<small>AI TRANSLATE</small></span></a><button id="settings" class="quiet">接口设置 ↗</button></header>
+<div class="intro"><span class="eyebrow">WORDS, WITHOUT BORDERS</span><h1>读懂，另一种语言。</h1><p>让 AI 翻译，让好译文留在本地。</p></div>
+<div class="language-bar"><span>自动识别原文</span><span aria-hidden="true">⟶</span><label for="target" class="sr-only">目标语言</label><select id="target"></select></div>
+<section class="editor"><div class="panel"><div class="panel-heading"><label for="source">原文</label><button id="clear" class="quiet">清空</button></div><textarea id="source" maxlength="12000" placeholder="在这里粘贴你想读懂的文字…" spellcheck="false"></textarea><div class="panel-foot"><span id="counter">0 / 12,000</span><span>⌘ / Ctrl + Enter 翻译</span></div></div>
+<div class="panel result-panel"><div class="panel-heading"><span>译文</span><button id="copy" class="quiet" disabled>复制</button></div><div id="result" class="result" aria-live="polite"><span class="placeholder">文字的另一面，等你发现。</span></div><div class="panel-foot"><span id="origin">AI 翻译 · 本地缓存</span></div></div></section>
+<div class="action-row"><p id="status" role="status">首次使用，请先设置 AI 接口。</p><button id="translate" class="primary">翻译文本 <span aria-hidden="true">↗</span></button></div>
+<footer><span class="dot"></span><span id="cache-info">缓存保存在此设备</span><span class="footer-end">译一次，再遇即得。</span></footer>
+</main><script type="module" src="src/popup.js"></script></body></html>
