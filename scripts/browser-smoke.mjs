@@ -20,6 +20,8 @@ const assert = require('node:assert/strict');
   await page.getByText('首次使用，请先设置 AI 接口。').waitFor({ timeout: 3000 });
   await page.getByRole('button', { name: '翻译文本' }).click();
   await page.getByText('请先输入需要翻译的文本。').waitFor();
+  await page.getByRole('button', { name: '翻译当前网页', exact: true }).click();
+  await page.getByText('此页面无法翻译，请在普通 HTTP 或 HTTPS 网页上使用。').waitFor();
   // Seed a valid cached translation to verify a real extension cache read without network access.
   await page.evaluate(async () => {
    const { cacheKey, DEFAULTS } = await import('./src/core.js');

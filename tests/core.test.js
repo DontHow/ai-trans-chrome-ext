@@ -41,10 +41,10 @@ test('handles HTTP, network, malformed and empty results without leaking respons
   await assert.rejects(requestTranslation(DEFAULTS, 'Hello', 'English', async () => Response.json({})), /未返回译文/);
 });
 test('cache prunes expired, oldest, and oversized entries', () => {
-  const cache = Object.fromEntries(Array.from({ length: 205 }, (_, i) => [String(i), { used: i, expires: 1000, translation: '你好' }]));
+  const cache = Object.fromEntries(Array.from({ length: 1005 }, (_, i) => [String(i), { used: i, expires: 1000, translation: '你好' }]));
   cache.expired = { used: 900, expires: 10, translation: 'gone' };
   const clean = pruneCache(cache, 20);
-  assert.equal(Object.keys(clean).length, 200);
-  assert.ok(!clean.expired && !clean['0'] && clean['204']);
+  assert.equal(Object.keys(clean).length, 1000);
+  assert.ok(!clean.expired && !clean['0'] && clean['1004']);
   assert.deepEqual(pruneCache(cache, 20, 2), {});
 });

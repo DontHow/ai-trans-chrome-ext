@@ -36,10 +36,25 @@ async function init() {
       const id = `selection:${token}`;
       const selection = (await chrome.storage.session.get(id))[id];
       await chrome.storage.session.remove(id);
-      if (selection?.expires > Date.now()) { $('source').value = selection.text; changed(); }
+      if (selection?.expires > Date.now()) {
+        if (selection.error) status(selection.error, 'error');
+        else { $('source').value = selection.text; changed(); }
+      }
       else status('选中文本已过期，请重新在网页中选择。', 'error');
     }
     await cacheInfo();
   } catch (error) { status(error.message, 'error'); }
 }
 init();
+
+for (const [id, type] of [['translate-page', 'startPage'], ['restore-page', 'restorePage']]) {
+  $(id).addEventListener('click', async () => {
+    $(id).disabled = true;
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      await send(type, { tabId: tab?.id, target: $('target').value });
+      status(type === 'startPage' ? '网页翻译已启动，可关闭弹窗并在网页查看进度。' : '已恢复网页原文。', 'success');
+    } catch (error) { status(error.message, 'error'); }
+    finally { $(id).disabled = false; }
+  });
+}

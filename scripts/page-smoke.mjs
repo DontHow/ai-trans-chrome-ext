@@ -1,0 +1,102 @@
+import { createRequire } from 'node:module';
+import { mkdtemp, cp, readFile, writeFile, rm, mkdir } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import assert from 'node:assert/strict';
+const require = createRequire(import.meta.url);
+const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const directory = await mkdtemp(join(tmpdir(), 'yi-cun-page-'));
+const extension = join(directory, 'extension');
+const requests = [];
+let release;
+const server = createServer(async (req, res) => {
+  if (req.url === '/v1/chat/completions') {
+    let body = ''; for await (const chunk of req) body += chunk;
+    const input = JSON.parse(body).messages[1].content;
+    requests.push(input);
+    if (['Wait for this translation.', 'A paragraph that changes.'].includes(input)) await new Promise(resolve => { release = resolve; });
+    const translations = { 'Explore the world': '探索世界', 'Hello world.': '你好，世界。', 'Wait for this translation.': '等待这段译文。' };
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ choices: [{ message: { content: translations[input] || input } }] }));
+    return;
+  }
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+  res.end(`<!doctype html><html><head><title>Page translation fixture</title><style>body{font:18px/1.8 Georgia;margin:60px auto;max-width:700px}h1{font-size:36px}textarea{display:block}</style></head><body><main><h1>Explore the world</h1><p id="first">Hello <a href="#second">world</a>.</p><p id="second"><span>Hello</span> <em>world</em>.</p><p hidden>Hidden text must not be sent.</p><div style="display:none"><p>Also hidden.</p></div><code>Code must not be sent.</code><p translate="no">Do not translate this.</p><div contenteditable="true">Private draft must not be sent.</div><textarea>Form values must not be sent.</textarea><input value="Private form value"><p>12345</p></main></body></html>`);
+});
+await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+let context;
+try {
+  await mkdir(extension);
+  for (const path of ['src', 'manifest.json', 'popup.html', 'options.html']) await cp(join(process.cwd(), path), join(extension, path), { recursive: true });
+  const manifest = JSON.parse(await readFile(join(extension, 'manifest.json'), 'utf8'));
+  // Automation cannot click the browser toolbar to grant activeTab. Only the temporary
+  // test copy gets loopback host access, for both the fixture and the mock AI endpoint.
+  manifest.host_permissions = ['http://127.0.0.1/*'];
+  await writeFile(join(extension, 'manifest.json'), JSON.stringify(manifest));
+  context = await chromium.launchPersistentContext(join(directory, 'profile'), { headless: true, ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : { channel: 'chromium' }), args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
+  const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+  const id = new URL(worker.url()).host;
+  const ui = await context.newPage();
+  await ui.goto(`chrome-extension://${id}/popup.html`);
+  await ui.evaluate(async origin => {
+    const result = await chrome.runtime.sendMessage({ type: 'saveSettings', settings: { url: `${origin}/v1`, model: 'fixture', key: 'test-only-key', target: '简体中文', cacheDays: 30 } });
+    if (!result.ok) throw new Error(result.error);
+  }, `http://127.0.0.1:${server.address().port}`);
+  const page = await context.newPage();
+  await page.goto(`http://127.0.0.1:${server.address().port}/article`);
+  const original = await page.locator('main').innerHTML();
+  const tabId = await ui.evaluate(async () => (await chrome.tabs.query({ url: 'http://127.0.0.1/*' }))[0].id);
+  const action = type => ui.evaluate(async ({ type, tabId }) => {
+    const response = await chrome.runtime.sendMessage({ type, tabId, target: '简体中文' });
+    if (!response.ok) throw new Error(response.error);
+  }, { type, tabId });
+  await action('startPage');
+  await page.getByRole('status').filter({ hasText: '翻译完成' }).waitFor();
+  assert.equal(await page.locator('[data-ai-translation]').count(), 3);
+  assert.equal(requests.length, 2, 'identical paragraphs must share requests/cache');
+  assert.equal(await page.locator('#first a').getAttribute('href'), '#second');
+  assert.equal(await page.locator('#first [data-ai-translation] span').innerText(), '你好，世界。');
+  assert.ok(requests.every(text => ['Explore the world', 'Hello world.'].includes(text)), 'private, hidden, code and form text must stay excluded');
+  await mkdir(join(process.cwd(), 'artifacts'), { recursive: true });
+  await page.screenshot({ path: join(process.cwd(), 'artifacts/page-translation.png'), fullPage: true, caret: 'initial' });
+  await action('startPage');
+  await page.getByRole('status').filter({ hasText: '翻译完成' }).waitFor();
+  assert.equal(requests.length, 2, 'repeat page translation must hit the persistent cache');
+  assert.equal(await page.locator('[data-ai-translation]').count(), 3, 'repeated starts must not duplicate translations');
+  await page.getByRole('button', { name: '恢复原文', exact: true }).click();
+  assert.equal(await page.locator('main').innerHTML(), original);
+  assert.equal(await page.locator('[data-ai-toolbar]').count(), 0);
+  await page.locator('main').evaluate(main => { main.innerHTML = '<p id="slow">Wait for this translation.</p>'; });
+  await action('startPage');
+  await page.waitForFunction(() => document.querySelector('[data-ai-toolbar]'));
+  const deadline = Date.now() + 5000;
+  while (!release && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.ok(release, 'mock AI request should start');
+  await action('restorePage');
+  release(); release = null;
+  await page.waitForTimeout(200);
+  assert.equal(await page.locator('[data-ai-translation]').count(), 0, 'restoring must suppress in-flight results');
+  await action('startPage');
+  await page.getByRole('status').filter({ hasText: '翻译完成' }).waitFor();
+  assert.equal(await page.locator('#slow [data-ai-translation] span').innerText(), '等待这段译文。');
+  assert.equal(requests.length, 3);
+  await action('restorePage');
+  await page.locator('main').evaluate(main => { main.innerHTML = '<p id="changing">A paragraph that changes.</p>'; });
+  await action('startPage');
+  const changedDeadline = Date.now() + 5000;
+  while (!release && Date.now() < changedDeadline) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.ok(release);
+  await page.locator('#changing').evaluate(element => { element.textContent = 'The website has changed this paragraph.'; });
+  release(); release = null;
+  await page.getByRole('status').filter({ hasText: '因网页变化跳过' }).waitFor();
+  assert.equal(await page.locator('[data-ai-translation]').count(), 0);
+  await action('restorePage');
+  console.log('PASS: real page extraction, mock AI fetch, duplicate/cache reuse, inline links, private/hidden text exclusion, repeated start, exact DOM restore, restore during an in-flight request and stale paragraph detection.');
+} finally {
+  release?.();
+  await context?.close();
+  server.closeAllConnections();
+  await new Promise(resolve => server.close(resolve));
+  await rm(directory, { recursive: true, force: true });
+}

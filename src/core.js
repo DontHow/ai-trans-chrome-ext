@@ -57,11 +57,11 @@ export async function requestTranslation(settings, text, target, fetcher = fetch
 }
 export function pruneCache(cache, now = Date.now(), maxBytes = 4 * 1024 * 1024) {
   const entries = Object.entries(cache).filter(([, item]) => item.expires > now).sort((a, b) => b[1].used - a[1].used);
-  const result = {}; let size = 2;
+  const result = {}; let size = 2; let count = 0;
   for (const [key, value] of entries) {
     const bytes = new TextEncoder().encode(JSON.stringify({ [key]: value })).length;
-    if (Object.keys(result).length >= 200 || size + bytes > maxBytes) continue;
-    result[key] = value; size += bytes;
+    if (count >= 1000 || size + bytes > maxBytes) continue;
+    result[key] = value; size += bytes; count++;
   }
   return result;
 }
