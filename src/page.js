@@ -1,7 +1,7 @@
 // Runs only in Chrome's isolated content-script world after an explicit page action.
 (() => {
   if (globalThis.__yiCunPage) return;
-  const SKIP = 'script,style,noscript,textarea,input,select,button,pre,svg,canvas,math,iframe,[contenteditable]:not([contenteditable="false"]),[translate="no"],[hidden],[inert],[aria-hidden="true"],[data-ai-translation],[data-ai-toolbar]';
+  const SKIP = 'nav,[role="navigation"],[role="menu"],[role="menubar"],[role="tablist"],script,style,noscript,textarea,input,select,button,pre,svg,canvas,math,iframe,[contenteditable]:not([contenteditable="false"]),[translate="no"],[hidden],[inert],[aria-hidden="true"],[data-ai-translation],[data-ai-toolbar]';
   const INLINE_CONTEXT = 'p,h1,h2,h3,h4,h5,h6,li,blockquote,td,th,dt,dd,figcaption';
   const BLOCK = 'p,h1,h2,h3,h4,h5,h6,li,blockquote,td,th,dt,dd,figcaption,div,section,article,main,header,footer,nav,aside,body';
   const inserted = new Set();
@@ -18,6 +18,8 @@
     if (!element.getClientRects().length) return false;
     for (let node = element; node; node = node.parentElement) {
       const style = getComputedStyle(node);
+      const clip = style.clip.match(/^rect\((.*)\)$/)?.[1].split(/[ ,]+/).map(parseFloat);
+      if ((clip?.length === 4 && (clip[0] === clip[2] || clip[1] === clip[3])) || style.clipPath === 'inset(50%)') return false;
       if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || style.opacity === '0') return false;
     }
     return true;

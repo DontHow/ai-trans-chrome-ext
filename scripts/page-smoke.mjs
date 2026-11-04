@@ -22,7 +22,7 @@ const server = createServer(async (req, res) => {
     return;
   }
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-  res.end(`<!doctype html><html><head><title>Page translation fixture</title><style>body{font:18px/1.8 Georgia;margin:60px auto;max-width:700px}h1{font-size:36px}textarea{display:block}</style></head><body><main>A root paragraph before a heading.<h1>Explore the world</h1><p id="first">Hello <a href="#second">world</a>.</p><p id="second"><span>Hello</span> <em>world</em>.</p><p id="inline-code">Visit <code>example.com</code> now.</p><pre><code>Never send a standalone code block.</code></pre><p hidden>Hidden text must not be sent.</p><div style="display:none"><p>Also hidden.</p></div><code>Code must not be sent.</code><p translate="no">Do not translate this.</p><div contenteditable="true">Private draft must not be sent.</div><textarea>Form values must not be sent.</textarea><input value="Private form value"><p>12345</p></main></body></html>`);
+  res.end(`<!doctype html><html><head><title>Page translation fixture</title><style>body{font:18px/1.8 Georgia;margin:60px auto;max-width:700px}h1{font-size:36px}textarea{display:block}</style></head><body><nav aria-label="Repository"><a href="#first">Code</a><a href="#second">Issues</a></nav><div role="tablist"><span role="tab">Actions</span></div><h2 style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Repository navigation</h2><main>A root paragraph before a heading.<h1>Explore the world</h1><p id="first">Hello <a href="#second">world</a>.</p><p id="second"><span>Hello</span> <em>world</em>.</p><p id="inline-code">Visit <code>example.com</code> now.</p><pre><code>Never send a standalone code block.</code></pre><p hidden>Hidden text must not be sent.</p><div style="display:none"><p>Also hidden.</p></div><code>Code must not be sent.</code><p translate="no">Do not translate this.</p><div contenteditable="true">Private draft must not be sent.</div><textarea>Form values must not be sent.</textarea><input value="Private form value"><p>12345</p></main></body></html>`);
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 let context;
@@ -46,6 +46,7 @@ try {
   const page = await context.newPage();
   await page.goto(`http://127.0.0.1:${server.address().port}/article`);
   const original = await page.locator('main').innerHTML();
+  const navigation = await page.locator('nav').innerHTML();
   const tabId = await ui.evaluate(async () => (await chrome.tabs.query({ url: 'http://127.0.0.1/*' }))[0].id);
   const action = type => ui.evaluate(async ({ type, tabId }) => {
     const response = await chrome.runtime.sendMessage({ type, tabId, target: '简体中文' });
@@ -55,6 +56,8 @@ try {
   await page.getByRole('status').filter({ hasText: '翻译完成' }).waitFor();
   assert.equal(await page.locator('[data-ai-translation]').count(), 5);
   assert.equal(requests.length, 4, 'identical paragraphs must share requests/cache');
+  assert.equal(await page.locator('nav').innerHTML(), navigation, 'page translation must preserve application navigation');
+  assert.equal(await page.locator('nav [data-ai-translation], [role=tablist] [data-ai-translation], h2 [data-ai-translation]').count(), 0);
   assert.equal(await page.locator('#first a').getAttribute('href'), '#second');
   assert.equal(await page.locator('#first [data-ai-translation] span').innerText(), '你好，世界。');
   assert.equal(await page.locator('#inline-code [data-ai-translation] span').innerText(), '现在访问 example.com。');
