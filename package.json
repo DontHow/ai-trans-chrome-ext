@@ -1,13 +1,14 @@
 {
   "name": "ai-trans-chrome-ext",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
     "test": "node --test",
     "check": "node scripts/check.mjs",
     "test:browser": "node scripts/browser-smoke.mjs",
-    "test:page": "node scripts/page-smoke.mjs"
+    "test:page": "node scripts/page-smoke.mjs",
+    "test:adaptive": "node scripts/adaptive-smoke.mjs"
   },
   "engines": {
     "node": ">=20"

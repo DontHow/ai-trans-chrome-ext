@@ -1,0 +1,128 @@
+import { createRequire } from 'node:module';
+import { mkdtemp, cp, readFile, writeFile, rm, mkdir } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import assert from 'node:assert/strict';
+const require = createRequire(import.meta.url);
+const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const directory = await mkdtemp(join(tmpdir(), 'yi-cun-page-'));
+const extension = join(directory, 'extension');
+const requests = [];
+let release;
+const server = createServer(async (req, res) => {
+  if (req.url === '/v1/chat/completions') {
+    let body = ''; for await (const chunk of req) body += chunk;
+    const input = JSON.parse(body).messages[1].content;
+    requests.push(input);
+    if (['Wait for this translation.', 'A paragraph that changes.'].includes(input)) await new Promise(resolve => { release = resolve; });
+    const translations = {};
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ choices: [{ message: { content: `译文：${input}` } }] }));
+    return;
+  }
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+  res.end(`<!doctype html><html><head><title>Adaptive translation fixture</title><style>body{font:18px/1.8 Georgia;margin:40px auto;max-width:700px;padding:0 20px}h1{font-size:28px}.cards{display:grid;grid-template-columns:1fr 1fr;gap:16px}td{border:1px solid #999;padding:12px}</style></head><body><nav>Navigation must stay untouched.</nav><aside>Outside metadata must not be sent.</aside><main><h1>Reading without breaking the page</h1><p id="lead">A complete paragraph with <strong>emphasis</strong> and a <a href="#far">working link</a> stays together.</p><div class="cards"><p id="card">A compact application card needs a floating translation.</p><button>Application action</button></div><table><caption id="caption">Financial summary</caption><tr><td id="cell" tabindex="0">Quarterly revenue increased steadily.</td></tr></table><p id="far" style="margin-top:2600px">Below the fold should wait until you scroll.</p></main></body></html>`);
+});
+await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+let context;
+try {
+  await mkdir(extension);
+  for (const path of ['src', 'manifest.json', 'popup.html', 'options.html']) await cp(join(process.cwd(), path), join(extension, path), { recursive: true });
+  const manifest = JSON.parse(await readFile(join(extension, 'manifest.json'), 'utf8'));
+  // Automation cannot click the browser toolbar to grant activeTab. Only the temporary
+  // test copy gets loopback host access, for both the fixture and the mock AI endpoint.
+  manifest.host_permissions = ['http://127.0.0.1/*', 'https://github.com/*'];
+  await writeFile(join(extension, 'manifest.json'), JSON.stringify(manifest));
+  context = await chromium.launchPersistentContext(join(directory, 'profile'), { headless: true, ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : { channel: 'chromium' }), args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
+  const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+  const id = new URL(worker.url()).host;
+  const ui = await context.newPage();
+  await ui.goto(`chrome-extension://${id}/popup.html`);
+  await ui.evaluate(async origin => {
+    const result = await chrome.runtime.sendMessage({ type: 'saveSettings', settings: { url: `${origin}/v1`, model: 'fixture', key: 'test-only-key', target: '简体中文', cacheDays: 30 } });
+    if (!result.ok) throw new Error(result.error);
+  }, `http://127.0.0.1:${server.address().port}`);
+  const page = await context.newPage();
+  await page.goto(`http://127.0.0.1:${server.address().port}/article`);
+  const original = await page.locator('main').innerHTML();
+  const navigation = await page.locator('nav').innerHTML();
+  const tabId = await ui.evaluate(async () => (await chrome.tabs.query({ url: 'http://127.0.0.1/*' }))[0].id);
+  const action = type => ui.evaluate(async ({ type, tabId }) => {
+    const response = await chrome.runtime.sendMessage({ type, tabId, target: '简体中文' });
+    if (!response.ok) throw new Error(response.error);
+  }, { type, tabId });
+  await action('startPage');
+  await page.locator('#lead [data-ai-translation]').waitFor();
+  await page.locator('h1 [data-ai-translation]').waitFor();
+  assert.equal(requests.length, 2);
+  assert.ok(requests.includes('A complete paragraph with emphasis and a working link stays together.'));
+  assert.equal(await page.locator('#far [data-ai-translation], #cell [data-ai-translation], #card [data-ai-translation], #caption [data-ai-translation]').count(), 0);
+  const tableBefore = await page.locator('table').evaluate(node => node.outerHTML);
+  const cardBefore = await page.locator('.cards').evaluate(node => node.outerHTML);
+  await page.locator('#cell').hover();
+  await page.getByText('译文：Quarterly revenue increased steadily.', { exact: true }).waitFor();
+  assert.equal(await page.locator('table').evaluate(node => node.outerHTML), tableBefore);
+  await page.mouse.move(0, 0);
+  await page.locator('[data-ai-tooltip]').waitFor({ state: 'hidden' });
+  await page.locator('#card').hover();
+  await page.getByText('译文：A compact application card needs a floating translation.', { exact: true }).waitFor();
+  assert.equal(await page.locator('.cards').evaluate(node => node.outerHTML), cardBefore);
+  await mkdir(join(process.cwd(), 'artifacts'), { recursive: true });
+  await page.screenshot({ path: join(process.cwd(), 'artifacts/adaptive-tooltip.png'), fullPage: false, animations: 'disabled' });
+  const quietCount = requests.length;
+  await page.waitForTimeout(700);
+  assert.equal(requests.length, quietCount, 'our rendering must not trigger an observer/request loop');
+  await page.locator('#far').scrollIntoViewIfNeeded();
+  await page.locator('#far [data-ai-translation]').waitFor();
+  assert.ok(requests.includes('Below the fold should wait until you scroll.'));
+  await page.locator('#lead').scrollIntoViewIfNeeded();
+  await page.locator('#lead').evaluate(lead => {
+    const paragraph = document.createElement('p'); paragraph.id = 'dynamic'; paragraph.textContent = 'New content should be translated when it is added.'; lead.after(paragraph);
+  });
+  await page.locator('#dynamic [data-ai-translation]').waitFor();
+  await page.locator('#lead').evaluate(lead => { lead.textContent = 'A refreshed paragraph replaces the old source text.'; });
+  await page.getByText('译文：A refreshed paragraph replaces the old source text.', { exact: true }).waitFor();
+  assert.equal(await page.locator('#lead [data-ai-translation]').count(), 1);
+  const beforeRemount = requests.length;
+  await page.locator('#lead [data-ai-translation]').evaluate(node => node.remove());
+  await page.locator('#lead [data-ai-translation]').waitFor();
+  assert.equal(requests.length, beforeRemount, 'framework removal must reuse the completed translation');
+  await page.locator('#lead [data-ai-translation]').evaluate(node => node.remove());
+  await page.waitForTimeout(500);
+  await page.mouse.move(0, 0); await page.locator('#lead').hover();
+  await page.getByText('译文：A refreshed paragraph replaces the old source text.', { exact: true }).waitFor();
+  assert.equal(await page.locator('#lead [data-ai-translation]').count(), 0, 'repeated framework conflicts must fall back to floating translation');
+  assert.equal(requests.length, beforeRemount);
+  await page.getByRole('button', { name: '停止', exact: true }).click();
+  const stoppedCount = requests.length;
+  await page.locator('main').evaluate(main => { const p = document.createElement('p'); p.textContent = 'Stopped sessions must ignore new content.'; main.prepend(p); });
+  await page.waitForTimeout(600);
+  assert.equal(requests.length, stoppedCount);
+  const expected = await page.locator('main').evaluate(main => { const copy = main.cloneNode(true); copy.querySelectorAll('[data-ai-translation]').forEach(node => node.remove()); return copy.innerHTML; });
+  await action('restorePage');
+  assert.equal(await page.locator('main').innerHTML(), expected);
+  assert.equal(await page.locator('[data-ai-translation],[data-ai-tooltip],[data-ai-toolbar]').count(), 0);
+  await action('startPage');
+  await page.locator('#dynamic [data-ai-translation]').waitFor();
+  const beforeRoute = requests.length;
+  await page.evaluate(() => { history.pushState({}, '', '/another-article'); document.querySelector('main').innerHTML = '<p>New route must require another explicit translation action.</p>'; });
+  await page.getByText('网页已切换，请重新点击「翻译当前网页」。', { exact: true }).waitFor();
+  assert.equal(requests.length, beforeRoute);
+  await action('restorePage');
+  await context.route('https://github.com/adaptive/fixture', route => route.fulfill({ contentType: 'text/html', body: '<html><body><nav>Repository controls</nav><main><p>Unrelated account and repository metadata.</p><article class="markdown-body"><h1>README documentation</h1><p>Only the rendered README should be selected on this GitHub fixture.</p></article></main></body></html>' }));
+  const github = await context.newPage(); await github.goto('https://github.com/adaptive/fixture');
+  const githubTab = await ui.evaluate(async () => (await chrome.tabs.query({ url: 'https://github.com/*' }))[0].id);
+  await ui.evaluate(async tabId => { const r = await chrome.runtime.sendMessage({ type: 'startPage', tabId }); if (!r.ok) throw new Error(r.error); }, githubTab);
+  await github.locator('.markdown-body p [data-ai-translation]').waitFor();
+  assert.ok(!requests.includes('Unrelated account and repository metadata.'));
+  assert.equal(await github.locator('nav [data-ai-translation], main > p [data-ai-translation]').count(), 0);
+  assert.ok(!requests.includes('Navigation must stay untouched.') && !requests.includes('Outside metadata must not be sent.'));
+  console.log('PASS: content roots, semantic inline assembly, viewport-first loading, layout-safe hover fallback, dynamic additions/changes, observer deduplication, framework conflict fallback, stop/restore, route boundaries and GitHub README selection.');
+} finally {
+  release?.();
+  await context?.close();
+  server.closeAllConnections();
+  await new Promise(resolve => server.close(resolve));
+  await rm(directory, { recursive: true, force: true });
+}

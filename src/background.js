@@ -55,7 +55,7 @@ async function pageAction(message) {
     }
     const target = message.target || (await settings()).target;
     if (!LANGUAGES.includes(target)) throw new Error('不支持的目标语言。');
-    const injected = await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['src/page.js'] });
+    const injected = await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['src/page-analysis.js', 'src/page.js'] });
     const token = crypto.randomUUID();
     const documentId = injected[0]?.documentId;
     if (!documentId) throw new Error('无法识别网页，请刷新网页后重试。');

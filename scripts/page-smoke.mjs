@@ -108,7 +108,7 @@ try {
   assert.ok(release);
   await page.locator('#changing').evaluate(element => { element.textContent = 'The website has changed this paragraph.'; });
   release(); release = null;
-  await page.getByRole('status').filter({ hasText: '因网页变化跳过' }).waitFor();
+  await page.getByRole('status').filter({ hasText: '翻译完成' }).waitFor();
   assert.equal(await page.locator('[data-ai-translation]').count(), 0);
   await action('restorePage');
   await page.locator('main').evaluate(main => { main.innerHTML = '<p id="same">JavaScript</p><p id="whitespace">API reference</p><p id="case-change">hello world.</p>'; });

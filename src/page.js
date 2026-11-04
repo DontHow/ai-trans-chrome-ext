@@ -1,60 +1,19 @@
 // Runs only in Chrome's isolated content-script world after an explicit page action.
 (() => {
   if (globalThis.__yiCunPage) return;
-  const SKIP = 'nav,[role="navigation"],[role="menu"],[role="menubar"],[role="tablist"],script,style,noscript,textarea,input,select,button,pre,svg,canvas,math,iframe,[contenteditable]:not([contenteditable="false"]),[translate="no"],[hidden],[inert],[aria-hidden="true"],[data-ai-translation],[data-ai-toolbar]';
-  const INLINE_CONTEXT = 'p,h1,h2,h3,h4,h5,h6,li,blockquote,td,th,dt,dd,figcaption';
-  const BLOCK = 'p,h1,h2,h3,h4,h5,h6,li,blockquote,td,th,dt,dd,figcaption,div,section,article,main,header,footer,nav,aside,body';
+  const content = globalThis.__yiCunContent;
   const inserted = new Set();
   let runId = 0;
   let toolbar;
-
+  let stopSession = () => {};
+  function removeTranslation(host) {
+    if (host) { host.remove(); inserted.delete(host); }
+  }
   function restore() {
-    runId++;
+    stopSession(); runId++;
     for (const node of inserted) node.remove();
     inserted.clear();
     toolbar?.remove(); toolbar = null;
-  }
-  function visible(element) {
-    if (!element.getClientRects().length) return false;
-    for (let node = element; node; node = node.parentElement) {
-      const style = getComputedStyle(node);
-      const clip = style.clip.match(/^rect\((.*)\)$/)?.[1].split(/[ ,]+/).map(parseFloat);
-      if ((clip?.length === 4 && (clip[0] === clip[2] || clip[1] === clip[3])) || style.clipPath === 'inset(50%)') return false;
-      if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || style.opacity === '0') return false;
-    }
-    return true;
-  }
-  function textOf(nodes) {
-    return nodes.map(node => node.nodeType === Node.ELEMENT_NODE ? '\n' : node.textContent).join('').replace(/[^\S\n]+/g, ' ').trim();
-  }
-  function collect() {
-    const groups = [];
-    let currentGroup;
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
-    while (walker.nextNode()) {
-      const node = walker.currentNode;
-      const isBreak = node.nodeType === Node.ELEMENT_NODE && node.tagName === 'BR';
-      if (node.nodeType === Node.ELEMENT_NODE && !isBreak) continue;
-      const parent = node.parentElement;
-      if (!parent || (!isBreak && !node.textContent) || parent.closest(SKIP) || !visible(parent)) continue;
-      const literal = parent.closest('code,kbd,samp');
-      if (literal && !literal.closest(INLINE_CONTEXT)) continue;
-      const block = parent.closest(BLOCK) || parent;
-      if (!currentGroup || currentGroup.element !== block) {
-        currentGroup = { element: block, nodes: [] };
-        groups.push(currentGroup);
-      }
-      currentGroup.nodes.push(node);
-    }
-    const items = []; let characters = 0; let limited = false;
-    for (const { element, nodes } of groups) {
-      const text = textOf(nodes);
-      if (!/\p{L}/u.test(text)) continue;
-      if (items.length >= 300 || characters + text.length > 120000) { limited = true; continue; }
-      characters += text.length;
-      items.push({ element, nodes, text });
-    }
-    return { items, limited };
   }
   function createToolbar(target) {
     const host = document.createElement('div');
@@ -99,17 +58,17 @@
     const reopen = document.createElement('button'); reopen.className = 'reopen'; reopen.hidden = true; reopen.setAttribute('aria-label', '展开翻译工具栏');
     const setState = state => {
       section.dataset.state = state;
-      const label = { running: '翻译中', paused: '已停止', complete: '已完成', error: '需重试', empty: '无正文' }[state];
+      const label = { running: '翻译中', paused: '已停止', complete: '已完成', waiting: '待阅读', error: '需重试', empty: '无正文' }[state];
       badge.textContent = label; reopen.textContent = `译存 · ${label}`;
-      stop.hidden = state !== 'running';
+      stop.hidden = !['running', 'waiting'].includes(state);
     };
-    stop.onclick = () => { runId++; status.textContent = '已停止，已显示的译文会保留。'; stop.disabled = true; setState('paused'); };
+    stop.onclick = () => { stopSession(); runId++; status.textContent = '已停止，已显示的译文会保留。'; stop.disabled = true; setState('paused'); };
     minimize.onclick = () => { section.hidden = true; reopen.hidden = false; reopen.focus(); };
     reopen.onclick = () => { section.hidden = false; reopen.hidden = true; minimize.focus(); };
     setState('running');
     actions.append(stop, reset); section.append(header, status, progress, actions); shadow.append(style, section, reopen); document.documentElement.append(host);
     toolbar = host;
-    return { status, stop, progress, setState };
+    return { status, stop, progress, setState, scope: language };
   }
   async function translateText(text, token) {
     const response = await chrome.runtime.sendMessage({ type: 'pageTranslate', token, text });
@@ -143,43 +102,190 @@
     while (anchor && anchor.parentNode !== item.element) anchor = anchor.parentNode;
     if (!anchor) return;
     anchor.after(host); inserted.add(host);
+    return host;
+  }
+  function createTooltip() {
+    const host = document.createElement('div'); host.dataset.aiTooltip = ''; host.setAttribute('translate', 'no');
+    host.style.cssText = 'all:initial!important;display:none!important;position:fixed!important;z-index:2147483647!important;max-width:calc(100vw - 24px)!important';
+    const shadow = host.attachShadow({ mode: 'open' });
+    const style = document.createElement('style');
+    style.textContent = `section{box-sizing:border-box;width:340px;max-width:calc(100vw - 24px);max-height:min(360px,60vh);overflow:auto;padding:14px 16px;border:1px solid #9eae91;border-radius:10px;background:#fffef9;color:#233c34;box-shadow:0 6px 28px #152b2133;font:14px/1.8 "PingFang SC","Microsoft YaHei",sans-serif;letter-spacing:normal;text-align:start}header{display:flex;align-items:center;justify-content:space-between;font-size:11px;color:#68786c;margin-bottom:8px}button{font:inherit;border:0;background:transparent;color:inherit;cursor:pointer;padding:2px 5px}p{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}@media(prefers-color-scheme:dark){section{background:#202b25;color:#edf1e6;border-color:#60735e}header{color:#abb9a6}}`;
+    const box = document.createElement('section'); box.setAttribute('aria-label', '悬浮译文');
+    const header = document.createElement('header'); const title = document.createElement('span'); title.textContent = '译存 · 悬浮译文';
+    const close = document.createElement('button'); close.textContent = '×'; close.setAttribute('aria-label', '关闭悬浮译文');
+    const body = document.createElement('p'); body.setAttribute('role', 'status'); body.setAttribute('aria-live', 'polite');
+    header.append(title, close); box.append(header, body); shadow.append(style, box); document.documentElement.append(host);
+    const hide = () => host.style.setProperty('display', 'none', 'important'); close.onclick = hide;
+    return {
+      host, hide,
+      show(text, element) {
+        body.textContent = text; host.style.setProperty('display', 'block', 'important');
+        const anchor = element.getBoundingClientRect(); const bounds = host.getBoundingClientRect();
+        host.style.setProperty('left', `${Math.max(12, Math.min(anchor.left, innerWidth - bounds.width - 12))}px`, 'important');
+        host.style.setProperty('top', `${Math.max(12, Math.min(anchor.bottom + 8, innerHeight - bounds.height - 12))}px`, 'important');
+      }
+    };
   }
   function start(token, target) {
     restore();
     const current = runId;
-    const { items, limited } = collect();
     const ui = createToolbar(target);
-    let next = 0; let done = 0; let changed = 0; let identical = 0; let failure = '';
-    const progress = () => { ui.status.textContent = `正在翻译 ${done} / ${items.length} 段`; ui.progress.max = items.length; ui.progress.value = done; };
-    if (!items.length) { ui.status.textContent = '没有找到可翻译的网页文字。'; ui.stop.disabled = true; ui.setState('empty'); ui.progress.hidden = true; return; }
-    progress();
-    async function worker() {
-      while (current === runId && !failure && next < items.length) {
-        const item = items[next++];
-        try {
-          const chunks = [];
-          for (let offset = 0; offset < item.text.length; offset += 12000) {
-            if (current !== runId || failure) return;
-            chunks.push(await translateText(item.text.slice(offset, offset + 12000), token));
-          }
-          if (current !== runId) return;
-          // Avoid placing stale text on pages that re-render while a request runs.
-          const fresh = item.nodes.every(node => item.element.contains(node)) && textOf(item.nodes) === item.text;
-          if (item.element.isConnected && fresh) {
-            const translation = chunks.join('\n');
-            const comparable = value => value.normalize('NFC').replace(/\s+/gu, ' ').trim();
-            if (comparable(translation) === comparable(item.text)) identical++;
-            else showTranslation(item, translation, target);
-          } else changed++;
-          done++; progress();
-        } catch (error) { failure = error.message; }
-      }
+    const records = new Map();
+    const queue = [];
+    const observed = new Set();
+    const viewportPending = new Set();
+    const budgeted = new Set();
+    const route = () => location.origin + location.pathname + location.search + (/^#!?\//.test(location.hash) ? location.hash : '');
+    const startRoute = route();
+    let stopped = false; let active = 0; let characters = 0; let limited = false; let failure = '';
+    let scanTimer; let firstMutation = 0; let hoverTimer; let hideTimer; let hovered; let tooltip;
+    const comparable = value => value.normalize('NFC').replace(/\s+/gu, ' ').trim();
+    const alive = record => !stopped && current === runId && records.get(record.item.key) === record;
+    function update() {
+      if (stopped || current !== runId) return;
+      const all = [...records.values()];
+      const done = all.filter(record => ['done', 'identical'].includes(record.status)).length;
+      const shown = all.filter(record => record.host?.isConnected).length;
+      const same = all.filter(record => record.status === 'identical').length;
+      ui.progress.max = Math.max(1, all.length); ui.progress.value = done;
+      ui.setState(failure ? 'error' : active || queue.length || viewportPending.size ? 'running' : 'waiting');
+      const counts = `已显示 ${shown} 段${same ? `，${same} 段与原文相同已隐藏` : ''}`;
+      ui.status.textContent = failure ? `${counts}。${failure} 重新点击「翻译当前网页」可重试。` : active || queue.length ? `正在翻译 ${done} / ${all.length} 段 · ${counts}` : viewportPending.size ? '正在识别可视正文…' : `当前区域翻译完成 · ${counts}。向下滚动继续；复杂区域悬停翻译。${limited ? '已达本次 300 段 / 120,000 字符上限。' : ''}`;
     }
-    Promise.all([worker(), worker()]).then(() => {
-      if (current !== runId) return;
-      ui.stop.disabled = true; ui.setState(failure ? 'error' : 'complete');
-      ui.status.textContent = failure ? `已完成 ${done} / ${items.length} 段。${failure} 可重新点击「翻译当前网页」重试。` : `翻译完成 · 已显示 ${done - changed - identical} 段${identical ? `，${identical} 段与原文相同已隐藏` : ''}${changed ? `，${changed} 段因网页变化跳过` : ''}${limited ? '（达到单页 300 段 / 120,000 字符上限）' : ''}。`;
-    }).catch(error => { if (current === runId) { ui.status.textContent = error.message; ui.stop.disabled = true; ui.setState('error'); } });
+    function halt() {
+      if (stopped) return;
+      stopped = true; queue.length = 0;
+      intersection.disconnect(); mutations.disconnect();
+      clearTimeout(scanTimer); clearTimeout(hoverTimer); clearTimeout(hideTimer);
+      document.removeEventListener('pointerover', onOver, true); document.removeEventListener('pointerout', onOut, true);
+      document.removeEventListener('focusin', onOver, true); document.removeEventListener('focusout', onOut, true); document.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('scroll', hideTooltip, true); window.removeEventListener('resize', hideTooltip); window.removeEventListener('popstate', checkRoute);
+      tooltip?.host.remove(); stopSession = () => {};
+    }
+    stopSession = halt;
+    function checkRoute() {
+      if (route() === startRoute) return true;
+      halt(); ui.setState('paused'); ui.status.textContent = '网页已切换，请重新点击「翻译当前网页」。'; return false;
+    }
+    function enqueue(record) {
+      if (!alive(record) || failure || !checkRoute() || record.status !== 'idle') return;
+      if (!budgeted.has(record.item.text)) {
+        if (budgeted.size >= 300 || characters + record.item.text.length > 120000) { limited = true; update(); return; }
+        budgeted.add(record.item.text); characters += record.item.text.length;
+      }
+      record.status = 'queued'; queue.push(record); pump();
+    }
+    async function execute(record) {
+      const snapshot = record.item;
+      try {
+        const chunks = [];
+        for (let offset = 0; offset < snapshot.text.length; offset += 12000) {
+          if (!alive(record) || !checkRoute()) return;
+          chunks.push(await translateText(snapshot.text.slice(offset, offset + 12000), token));
+        }
+        if (!alive(record) || !checkRoute()) return;
+        if (!content.fresh(snapshot)) { record.status = 'stale'; scheduleScan(); return; }
+        record.translation = chunks.join('\n');
+        record.status = comparable(record.translation) === comparable(snapshot.text) ? 'identical' : 'done';
+        if (record.status === 'done' && record.item.mode === 'inline') record.host = showTranslation(record.item, record.translation, target);
+        if (hovered === record && tooltip) tooltip.show(record.status === 'identical' ? '与原文相同。' : record.translation, record.item.element);
+      } catch (error) {
+        if (alive(record)) { record.status = 'error'; failure = error.message; queue.length = 0; if (hovered === record) tooltip?.show(error.message, record.item.element); }
+      } finally { active--; pump(); }
+    }
+    function pump() {
+      if (stopped || current !== runId) return;
+      while (!failure && active < 2 && queue.length) {
+        const record = queue.shift();
+        if (!alive(record)) continue;
+        active++; record.status = 'running'; void execute(record);
+      }
+      update();
+    }
+    const intersection = new IntersectionObserver(entries => {
+      for (const entry of entries) {
+        viewportPending.delete(entry.target);
+        if (!entry.isIntersecting) continue;
+        for (const record of records.values()) if (record.item.element === entry.target && record.item.mode === 'inline') enqueue(record);
+        intersection.unobserve(entry.target); observed.delete(entry.target);
+      }
+      update();
+    }, { rootMargin: '200px 0px' });
+    function scan() {
+      scanTimer = undefined; firstMutation = 0;
+      if (stopped || !checkRoute()) return;
+      const result = content.collect(); limited ||= result.limited;
+      ui.scope.textContent = `${result.label} → ${target}`;
+      const seen = new Set();
+      for (const item of result.items) {
+        seen.add(item.key);
+        let record = records.get(item.key);
+        if (record && record.item.text !== item.text) { removeTranslation(record.host); records.delete(item.key); record = null; }
+        if (!record) { record = { item, status: 'idle', host: null, translation: null }; records.set(item.key, record); }
+        else {
+          if (record.host && !record.host.isConnected) {
+            record.remounts = (record.remounts || 0) + 1;
+            if (record.remounts >= 2) record.forcedTooltip = true;
+          }
+          if (record.forcedTooltip) item.mode = 'tooltip';
+          record.item = item;
+          if (record.host && (!record.host.isConnected || item.mode !== 'inline')) { removeTranslation(record.host); record.host = null; }
+          // Framework re-renders may remove only our node. Reuse the result without a new request.
+          if (record.status === 'done' && !record.host && item.mode === 'inline') record.host = showTranslation(item, record.translation, target);
+          if (record.status === 'stale') record.status = 'idle';
+        }
+        if (record.status === 'idle' && item.mode === 'inline' && !observed.has(item.element)) {
+          observed.add(item.element); viewportPending.add(item.element); intersection.observe(item.element);
+        }
+      }
+      for (const [key, record] of records) if (!seen.has(key)) {
+        removeTranslation(record.host); records.delete(key);
+        if (hovered === record) { hovered = null; tooltip?.hide(); }
+      }
+      const waitingElements = new Set([...records.values()].filter(record => record.status === 'idle' && record.item.mode === 'inline').map(record => record.item.element));
+      for (const element of observed) if (!waitingElements.has(element)) { intersection.unobserve(element); observed.delete(element); viewportPending.delete(element); }
+      update();
+    }
+    function scheduleScan() {
+      if (stopped) return;
+      firstMutation ||= Date.now(); clearTimeout(scanTimer);
+      scanTimer = setTimeout(scan, Math.min(250, Math.max(0, 1000 - (Date.now() - firstMutation))));
+    }
+    const mutations = new MutationObserver(changes => {
+      if (changes.some(change => {
+        if (content.owned(change.target)) return false;
+        return change.type !== 'childList' || change.removedNodes.length || [...change.addedNodes].some(node => !content.owned(node));
+      })) scheduleScan();
+    });
+    function hideTooltip() { clearTimeout(hoverTimer); clearTimeout(hideTimer); hovered = null; tooltip?.hide(); }
+    function onKey(event) { if (event.key === 'Escape') hideTooltip(); }
+    function onOver(event) {
+      if (stopped || content.owned(event.target) || !checkRoute()) return;
+      let match;
+      for (const record of records.values()) if (record.item.mode === 'tooltip' && record.item.element.contains(event.target) && (!match || match.item.element.contains(record.item.element))) match = record;
+      if (!match) return;
+      clearTimeout(hideTimer);
+      if (hovered === match) return;
+      tooltip?.hide();
+      clearTimeout(hoverTimer); hovered = match;
+      hoverTimer = setTimeout(() => {
+        if (!alive(match) || hovered !== match || !content.fresh(match.item)) return;
+        tooltip ||= createTooltip();
+        tooltip.show(match.status === 'identical' ? '与原文相同。' : match.translation || '正在翻译…', match.item.element);
+        enqueue(match);
+      }, event.type === 'focusin' ? 0 : 350);
+    }
+    function onOut(event) {
+      if (!hovered) return;
+      const next = event.relatedTarget;
+      if (next instanceof Node && (hovered.item.element.contains(next) || tooltip?.host.contains(next))) return;
+      clearTimeout(hideTimer); hideTimer = setTimeout(hideTooltip, 160);
+    }
+    scan();
+    mutations.observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['hidden', 'aria-hidden', 'class', 'style', 'translate', 'contenteditable'] });
+    document.addEventListener('pointerover', onOver, true); document.addEventListener('pointerout', onOut, true);
+    document.addEventListener('focusin', onOver, true); document.addEventListener('focusout', onOut, true); document.addEventListener('keydown', onKey, true);
+    window.addEventListener('scroll', hideTooltip, true); window.addEventListener('resize', hideTooltip); window.addEventListener('popstate', checkRoute);
   }
   globalThis.__yiCunPage = { start, restore };
 })();

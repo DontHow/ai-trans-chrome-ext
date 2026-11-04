@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "译存 · AI Translate",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "使用自定义 AI 接口翻译网页和文本，在本地缓存译文。支持双语网页和划词翻译。",
   "minimum_chrome_version": "120",
   "permissions": [
