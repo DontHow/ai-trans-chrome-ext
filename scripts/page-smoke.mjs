@@ -16,7 +16,7 @@ const server = createServer(async (req, res) => {
     const input = JSON.parse(body).messages[1].content;
     requests.push(input);
     if (['Wait for this translation.', 'A paragraph that changes.'].includes(input)) await new Promise(resolve => { release = resolve; });
-    const translations = { 'Explore the world': '探索世界', 'Hello world.': '你好，世界。', 'Wait for this translation.': '等待这段译文。', 'Visit example.com now.': '现在访问 example.com。', 'A root paragraph before a heading.': '标题前的正文。' };
+    const translations = { 'Explore the world': '探索世界', 'Hello world.': '你好，世界。', 'Wait for this translation.': '等待这段译文。', 'Visit example.com now.': '现在访问 example.com。', 'A root paragraph before a heading.': '标题前的正文。', 'API reference': '  API \n reference  ', 'hello world.': 'Hello world.' };
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ choices: [{ message: { content: translations[input] || input } }] }));
     return;
@@ -107,6 +107,17 @@ try {
   release(); release = null;
   await page.getByRole('status').filter({ hasText: '因网页变化跳过' }).waitFor();
   assert.equal(await page.locator('[data-ai-translation]').count(), 0);
+  await action('restorePage');
+  await page.locator('main').evaluate(main => { main.innerHTML = '<p id="same">JavaScript</p><p id="whitespace">API reference</p><p id="case-change">hello world.</p>'; });
+  await action('startPage');
+  await page.getByRole('status').filter({ hasText: '2 段与原文相同已隐藏' }).waitFor();
+  assert.equal(await page.locator('#same [data-ai-translation], #whitespace [data-ai-translation]').count(), 0, 'identical translations must not add duplicate text, including whitespace-only differences');
+  assert.equal(await page.locator('#case-change [data-ai-translation] span').innerText(), 'Hello world.', 'meaningful case changes must remain visible');
+  const completedRequests = requests.length;
+  await action('startPage');
+  await page.getByRole('status').filter({ hasText: '2 段与原文相同已隐藏' }).waitFor();
+  assert.equal(requests.length, completedRequests, 'identical translations must still be cached');
+  assert.equal(await page.locator('[data-ai-translation]').count(), 1);
   await action('restorePage');
   console.log('PASS: real page extraction, mock AI fetch, duplicate/cache reuse, inline links, private/hidden text exclusion, repeated start, exact DOM restore, restore during an in-flight request and stale paragraph detection.');
 } finally {

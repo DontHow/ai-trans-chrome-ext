@@ -147,7 +147,7 @@
     const current = runId;
     const { items, limited } = collect();
     const ui = createToolbar(target);
-    let next = 0; let done = 0; let changed = 0; let failure = '';
+    let next = 0; let done = 0; let changed = 0; let identical = 0; let failure = '';
     const progress = () => { ui.status.textContent = `正在翻译 ${done} / ${items.length} 段`; ui.progress.max = items.length; ui.progress.value = done; };
     if (!items.length) { ui.status.textContent = '没有找到可翻译的网页文字。'; ui.stop.disabled = true; ui.setState('empty'); ui.progress.hidden = true; return; }
     progress();
@@ -163,8 +163,12 @@
           if (current !== runId) return;
           // Avoid placing stale text on pages that re-render while a request runs.
           const fresh = item.nodes.every(node => item.element.contains(node)) && textOf(item.nodes) === item.text;
-          if (item.element.isConnected && fresh) showTranslation(item, chunks.join('\n'), target);
-          else changed++;
+          if (item.element.isConnected && fresh) {
+            const translation = chunks.join('\n');
+            const comparable = value => value.normalize('NFC').replace(/\s+/gu, ' ').trim();
+            if (comparable(translation) === comparable(item.text)) identical++;
+            else showTranslation(item, translation, target);
+          } else changed++;
           done++; progress();
         } catch (error) { failure = error.message; }
       }
@@ -172,7 +176,7 @@
     Promise.all([worker(), worker()]).then(() => {
       if (current !== runId) return;
       ui.stop.disabled = true; ui.setState(failure ? 'error' : 'complete');
-      ui.status.textContent = failure ? `已完成 ${done} / ${items.length} 段。${failure} 可重新点击「翻译当前网页」重试。` : `翻译完成 · ${done - changed} 段${changed ? `，${changed} 段因网页变化跳过` : ''}${limited ? '（达到单页 300 段 / 120,000 字符上限）' : ''}。`;
+      ui.status.textContent = failure ? `已完成 ${done} / ${items.length} 段。${failure} 可重新点击「翻译当前网页」重试。` : `翻译完成 · 已显示 ${done - changed - identical} 段${identical ? `，${identical} 段与原文相同已隐藏` : ''}${changed ? `，${changed} 段因网页变化跳过` : ''}${limited ? '（达到单页 300 段 / 120,000 字符上限）' : ''}。`;
     }).catch(error => { if (current === runId) { ui.status.textContent = error.message; ui.stop.disabled = true; ui.setState('error'); } });
   }
   globalThis.__yiCunPage = { start, restore };
