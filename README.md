@@ -2,9 +2,11 @@
 
 Chrome AI 翻译插件，支持自定义 API 地址、API Key 和模型，并在本机缓存译文。支持网页双语翻译，也可以在弹窗输入文本，或通过右键菜单翻译选中的文字。
 
+[下载 v0.3.1 测试版](https://github.com/DontHow/ai-trans-chrome-ext/releases/tag/v0.3.1)。测试版需要解压后手动加载，不会自动更新。
+
 ## 安装并配置
 
-1. 下载本仓库，或执行 `git clone https://github.com/DontHow/ai-trans-chrome-ext.git`。
+1. 下载并解压测试版安装包，或执行 `git clone https://github.com/DontHow/ai-trans-chrome-ext.git`。
 2. 在 Chrome 地址栏打开 `chrome://extensions`。
 3. 开启右上角的「开发者模式」。
 4. 点击「加载已解压的扩展程序」，选择包含 `manifest.json` 的项目目录。
